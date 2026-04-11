@@ -721,7 +721,7 @@ def list_projects(
 
     result = _execute_taiga_operation(
         "list_projects",
-        lambda: taiga_client_wrapper.api.projects.list(query_params={"member": my_id}),
+        lambda: taiga_client_wrapper.api.projects.list(member=my_id),
     )
     return _filter_response(result, "project", verbosity)
 
