@@ -708,12 +708,20 @@ def login(
 def list_projects(
     session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> List[Dict[str, Any]]:
-    """Lists projects accessible by the authenticated user."""
+    """Lists projects accessible by the authenticated user, including private ones."""
     actual_session_id = _get_session_id(session_id)
     logger.info(f"Executing list_projects for session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    # Fetch current user ID so Taiga returns private projects too
+    me = _execute_taiga_operation(
+        "list_projects(get_me)", lambda: taiga_client_wrapper.api.users.get_me()
+    )
+    my_id = me.get("id")
+
     result = _execute_taiga_operation(
-        "list_projects", lambda: taiga_client_wrapper.api.projects.list()
+        "list_projects",
+        lambda: taiga_client_wrapper.api.projects.list(member=my_id),
     )
     return _filter_response(result, "project", verbosity)
 
@@ -2225,6 +2233,94 @@ def list_comments(
         ]
 
     return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
+
+
+@mcp.tool()
+def edit_comment(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    new_comment: str,
+    session_id: Optional[str] = None,
+) -> dict:
+    """Edit an existing comment on a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment to edit (from list_comments)
+        new_comment: The new comment text
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        dict with status confirmation
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not new_comment or not new_comment.strip():
+        raise ValueError("New comment text must not be empty.")
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_edit_comment():
+        taiga_client_wrapper.api.post(
+            f"/history/{history_path}/{object_id}/edit_comment",
+            json={"comment_id": comment_id, "comment": new_comment},
+        )
+        return {
+            "status": "comment_edited",
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+        }
+
+    return _execute_taiga_operation("edit_comment", do_edit_comment, f"{object_type} {object_id}")
+
+
+@mcp.tool()
+def delete_comment(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    session_id: Optional[str] = None,
+) -> dict:
+    """Delete a comment from a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment to delete (from list_comments)
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        dict with status confirmation
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_delete_comment():
+        taiga_client_wrapper.api.post(
+            f"/history/{history_path}/{object_id}/delete_comment",
+            json={"comment_id": comment_id},
+        )
+        return {
+            "status": "comment_deleted",
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+        }
+
+    return _execute_taiga_operation("delete_comment", do_delete_comment, f"{object_type} {object_id}")
 
 
 # =============================================================================
